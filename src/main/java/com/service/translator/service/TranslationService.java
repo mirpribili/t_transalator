@@ -6,8 +6,9 @@ import com.service.translator.model.TranslationRequest;
 import com.service.translator.model.TranslationResponse;
 import com.service.translator.repository.TranslationRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.client.RestTemplateBuilder;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
@@ -25,6 +26,12 @@ public class TranslationService {
     private final RestTemplate restTemplate;
     private final TranslationRepository translationRepository;
     private final ExecutorService executorService;
+
+    @Value("${yandex.api.key}")
+    private String apiKey;
+
+    @Value("${yandex.folder.id}")
+    private String folderId;
 
     @Autowired
     public TranslationService(RestTemplateBuilder restTemplateBuilder, TranslationRepository translationRepository, ExecutorService executorService) {
@@ -58,11 +65,18 @@ public class TranslationService {
     }
 
     private String translateWord(String word, String sourceLang, String targetLang) throws TranslationException {
-        // Реализация вызова внешнего сервиса перевода
-        String url = String.format("https://translate.yandex.net/api/v1.5/tr.json/translate?key=trnsl.1.1.20190115T093726Z.65e1460d8d95bd06.р45ор345о3р4о53р45о345р3о&text=%s&lang=%s-%s", word, sourceLang, targetLang);
+        String url = "https://translate.api.cloud.yandex.net/translate/v2/translate";
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("Authorization", "Api-Key " + apiKey);
+
+        String requestBody = String.format("{\"folderId\": \"%s\", \"texts\": [\"%s\"], \"targetLanguageCode\": \"%s\"}", folderId, word, targetLang);
+
+        HttpEntity<String> requestEntity = new HttpEntity<>(requestBody, headers);
 
         try {
-            ResponseEntity<TranslationResponse> response = restTemplate.getForEntity(url, TranslationResponse.class);
+            ResponseEntity<TranslationResponse> response = restTemplate.exchange(url, HttpMethod.POST, requestEntity, TranslationResponse.class);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 return response.getBody().getText().get(0);
             } else {
