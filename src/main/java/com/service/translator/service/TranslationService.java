@@ -16,6 +16,9 @@ import org.springframework.web.client.RestTemplate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.io.UnsupportedEncodingException;
 /**
  * @author user
  * @year 2024
@@ -62,30 +65,49 @@ public class TranslationService {
         saveTranslationRequest(clientIp, text, result);
 
         return result;
+        // Remove multithreading for testing
+//        return translateWord(text, sourceLang, targetLang);
     }
 
     private String translateWord(String word, String sourceLang, String targetLang) throws TranslationException {
-        String url = "https://translate.api.cloud.yandex.net/translate/v2/translate";
+        String url = String.format("https://translate.api.cloud.yandex.net/translate/v2/translate?folderId=%s&targetLanguageCode=%s",
+                folderId,
+                targetLang);
+        System.out.println("Constructed URL: " + url);
 
         HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
         headers.set("Authorization", "Api-Key " + apiKey);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        System.out.println("Request Headers: " + headers);
 
-        String requestBody = String.format("{\"folderId\": \"%s\", \"texts\": [\"%s\"], \"targetLanguageCode\": \"%s\"}", folderId, word, targetLang);
-
-        HttpEntity<String> requestEntity = new HttpEntity<>(requestBody, headers);
+        String body = String.format("{\"folderId\": \"%s\", \"texts\": [\"%s\"], \"targetLanguageCode\": \"%s\"}",
+                folderId, word, targetLang);
+        System.out.println("Request Body: " + body);
+        HttpEntity<String> entity = new HttpEntity<>(body, headers);
 
         try {
-            ResponseEntity<TranslationResponse> response = restTemplate.exchange(url, HttpMethod.POST, requestEntity, TranslationResponse.class);
+            ResponseEntity<TranslationResponse> response = restTemplate.exchange(url, HttpMethod.POST, entity, TranslationResponse.class);
+            System.out.println("Response Status Code: " + response.getStatusCode());
+            System.out.println("Response Body: " + response.getBody());
+
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                return response.getBody().getText().get(0);
+                List<TranslationResponse.Translation> translations = response.getBody().getTranslations();
+                if (translations != null && !translations.isEmpty()) {
+                    return translations.get(0).getText();
+                } else {
+                    throw new TranslationException("Пустой ответ от API перевода");
+                }
             } else {
-                throw new TranslationException("Ошибка доступа к ресурсу перевода");
+                throw new TranslationException("Yandex API вернул ошибку: " + response.getStatusCode());
             }
         } catch (RestClientException e) {
+            e.printStackTrace(); // Печатаем стек-трейс ошибки
             throw new TranslationException("Ошибка доступа к ресурсу перевода", e);
         }
     }
+
+
+
 
     private void saveTranslationRequest(String clientIp, String inputText, String resultText) {
         TranslationRequest translationRequest = new TranslationRequest();
