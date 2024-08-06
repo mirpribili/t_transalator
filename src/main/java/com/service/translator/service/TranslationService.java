@@ -29,6 +29,10 @@ public class TranslationService {
     private final RestTemplate restTemplate;
     private final TranslationRepository translationRepository;
     private final ExecutorService executorService;
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+
+    @Value("${api.requests.per.second}")
+    private int requestsPerSecond;
 
     @Value("${yandex.api.key}")
     private String apiKey;
@@ -43,33 +47,69 @@ public class TranslationService {
         this.executorService = executorService;
     }
 
-    public String translateText(String text, String sourceLang, String targetLang, String clientIp) throws TranslationException {
-        String[] words = text.split("\\s+");
-        List<Future<String>> futures = new ArrayList<>();
 
-        for (String word : words) {
-            futures.add(executorService.submit(() -> translateWord(word, sourceLang, targetLang)));
+    public String translateText(String text, String targetLang, String clientIp) throws TranslationException {
+        String[] words = text.split("\\s+");
+        Semaphore semaphore = new Semaphore(requestsPerSecond); // Управление параллельными запросами
+        CompletionService<IndexedTranslation> completionService = new ExecutorCompletionService<>(executorService);
+
+        for (int i = 0; i < words.length; i++) {
+            final int index = i;
+            semaphore.acquireUninterruptibly(); // Получаем разрешение на выполнение
+            completionService.submit(() -> {
+                try {
+                    String translatedWord = translateWord(words[index], targetLang);
+                    return new IndexedTranslation(index, translatedWord);
+                } finally {
+                    semaphore.release(); // Освобождаем разрешение
+                }
+            });
+
+            // Добавляем задержку перед запуском следующего запроса
+            try {
+                Thread.sleep(1000 / requestsPerSecond); // Задержка в зависимости от количества запросов в секунду
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
 
-        StringBuilder translatedText = new StringBuilder();
+        String[] translatedWords = new String[words.length];
 
         try {
-            for (Future<String> future : futures) {
-                translatedText.append(future.get()).append(" ");
+            for (int i = 0; i < words.length; i++) {
+                Future<IndexedTranslation> future = completionService.take(); // Ожидаем завершения следующего запроса
+                IndexedTranslation indexedTranslation = future.get();
+                translatedWords[indexedTranslation.getIndex()] = indexedTranslation.getTranslatedWord();
             }
         } catch (InterruptedException | ExecutionException e) {
             throw new TranslationException("Ошибка при переводе", e);
         }
 
-        String result = translatedText.toString().trim();
+        String result = String.join(" ", translatedWords).trim();
         saveTranslationRequest(clientIp, text, result);
 
         return result;
-        // Remove multithreading for testing
-//        return translateWord(text, sourceLang, targetLang);
     }
 
-    private String translateWord(String word, String sourceLang, String targetLang) throws TranslationException {
+    private static class IndexedTranslation {
+        private final int index;
+        private final String translatedWord;
+
+        public IndexedTranslation(int index, String translatedWord) {
+            this.index = index;
+            this.translatedWord = translatedWord;
+        }
+
+        public int getIndex() {
+            return index;
+        }
+
+        public String getTranslatedWord() {
+            return translatedWord;
+        }
+    }
+
+    private String translateWord(String word, String targetLang) throws TranslationException {
         String url = String.format("https://translate.api.cloud.yandex.net/translate/v2/translate?folderId=%s&targetLanguageCode=%s",
                 folderId,
                 targetLang);

@@ -36,7 +36,6 @@ public class TranslationController {
         try {
             String translatedText = translationService.translateText(
                     requestDTO.getText(),
-                    requestDTO.getSourceLang(),
                     requestDTO.getTargetLang(),
                     clientIp
             );
